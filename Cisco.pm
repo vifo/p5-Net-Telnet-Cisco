@@ -21,7 +21,7 @@ use Carp;
 use vars qw($AUTOLOAD @ISA $VERSION $DEBUG);
 
 @ISA      = qw(Net::Telnet);
-$VERSION  = 1.09;
+$VERSION  = '1.10_01';
 $^W       = 1;
 $DEBUG    = 0;
 $|++;
@@ -340,7 +340,7 @@ sub login {
        $usage,
        $sent_wakeup,
        );
-    my ($username, $password, $passcode, $level) = ('','','','');
+    my ($username, $password, $tacpass, $passcode ) = ('','','','');
     my (%args, %seen);
 
     local $_;
@@ -901,20 +901,20 @@ username, they start the login conversation with a password request.
 
 =item B<cmd> - send a command
 
-             $ok = $obj->cmd($string);
-             $ok = $obj->cmd(String   => $string,
-                             [Output  => $ref,]
-                             [Prompt  => $match,]
-                             [Timeout => $secs,]
-                             [Cmd_remove_mode => $mode,]);
+    $ok = $obj->cmd($string);
+    $ok = $obj->cmd(String   => $string,
+                    [Output  => $ref,]
+                    [Prompt  => $match,]
+                    [Timeout => $secs,]
+                    [Cmd_remove_mode => $mode,]);
 
-             @output = $obj->cmd($string);
-             @output = $obj->cmd(String   => $string,
-                                 [Output  => $ref,]
-                                 [Prompt  => $match,]
-                                 [Timeout => $secs,]
-                                 [Cmd_remove_mode => $mode,]
-                                 [Normalize_cmd => $boolean,]);
+    @output = $obj->cmd($string);
+    @output = $obj->cmd(String   => $string,
+                        [Output  => $ref,]
+                        [Prompt  => $match,]
+                        [Timeout => $secs,]
+                        [Cmd_remove_mode => $mode,]
+                        [Normalize_cmd => $boolean,]);
 
 Normalize_cmd has been added to the default Net::Telnet args. It
 lets you temporarily change whether backspace, delete, and kill
