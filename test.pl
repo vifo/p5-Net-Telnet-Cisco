@@ -3,7 +3,7 @@
 # Before `make install' is performed this script should be runnable with
 # `make test'. After `make install' it should work as `perl test.pl'
 
-use Test::More tests => 30;
+use Test::More tests => 31;
 #use Test::More qw/no_plan/;
 use Term::ReadKey;
 
@@ -45,6 +45,24 @@ SKIP: {
     ok( $out[-1] !~ /--More--/, 	"autopage() last line"	);
     ok( $S->last_prompt !~ /--More--/,	"autopage() last prompt" );
 
+    open LOG, "< $input_log" or die "Can't open log: $!";
+    my $log = join "", <LOG>;
+    close LOG;
+
+    # Remove last prompt, which isn't present in @out
+    $log =~ s/\cJ\cJ.*\Z//m;
+
+    # get rid of "show ver" line
+    shift @out;
+
+    # Strip ^Hs from log
+    $log = Net::Telnet::Cisco::_normalize($log);
+
+    my $out = join "", @out;
+    $out =~ s/\cJ\cJ.*\Z//m;
+
+    my $i = index $log, $out;
+    ok( $i + length $out == length $log, "autopage() 1.09 bugfix" );
 
     # Turn off autopaging. We should timeout with a More prompt
     # on the last line.
@@ -117,6 +135,15 @@ SKIP: {
 #------------------------------------------------------------
 # subs
 #------------------------------------------------------------
+
+# Remove every backspace and the preceeding character from a scalar.
+sub strip_bs {
+    my $s = shift;
+    while ((my $i = index $s, "\cH") != -1) {
+	substr $s, $i - 1, 2, '';
+    }
+    return $s;
+}
 
 sub get_login {
     print <<EOB;
