@@ -338,6 +338,7 @@ sub login {
        $reset,
        $timeout,
        $usage,
+       $sent_wakeup,
        );
     my ($username, $password, $passcode, $level) = ('','','','');
     my (%args, %seen);
@@ -349,6 +350,7 @@ sub login {
     $self->timed_out('');
     return if $self->eof;
     $cmd_prompt = $self->prompt;
+    $sent_wakeup = 0;
 
     print "login:\t[orig: $cmd_prompt]\n" if $DEBUG;
 
@@ -413,7 +415,20 @@ sub login {
 	    }
 	};
 
-    my $sent_wakeup = 0;
+
+    # Send a newline as the wakeup-call
+    if ($self->send_wakeup eq 'connect') {
+
+	$sent_wakeup = 1;
+
+	my $old_sep = $self->output_record_separator;
+
+	$self->output_record_separator("\n");
+	$self->print('');
+	$self->output_record_separator($old_sep);
+    }
+
+
     while (1) {
 	(undef, $_) = $self->waitfor(
 		-match => '/(?:[Ll]ogin|[Uu]sername|[Pp]assw(?:or)?d)[:\s]*$/',
@@ -426,7 +441,7 @@ sub login {
 		if $self->eof;
 
 	    # We timed-out. Send a newline as the wakeup-call.
-	    if ($sent_wakeup == 0 && $self->send_wakeup) {
+	    if ($sent_wakeup == 0 && $self->send_wakeup eq 'timeout') {
 
 		$sent_wakeup = 1;
 
@@ -847,7 +862,7 @@ SNMP, there's Net::Telnet::Cisco.
 	[Always_waitfor_prompt	  => $boolean,] # 1
 	[Waitfor_pause		  => $milliseconds,] # 0.1
 	[Normalize_cmd		  => $boolean,] # 1
-	[Send_wakeup		  => $boolean,] # 0
+	[Send_wakeup		  => $when,] # 0
 	[Ignore_warnings	  => $boolean,] # 0
 	[Warnings		  => $matchop,] # see docs
 	
@@ -1071,18 +1086,23 @@ Default value: '/(?m:\s*--More--)/'.
 
 Please email me if you find others.
 
-=item B<send_wakeup> - send a newline to the router if it times-out during login.
+=item B<send_wakeup> - send a newline to the router at login time
 
-    $boolean = $obj->send_wakeup;
+    $when = $obj->send_wakeup;
 
-    $boolean = $obj->send_wakeup($boolean);
+    $when = $obj->send_wakeup( 'connect' );
+    $when = $obj->send_wakeup( 'timeout' );
+    $when = $obj->send_wakeup( 0 );
 
 Default value: 0
 
 Some routers quietly allow you to connect but don't display the
-expected login prompts. If we don't see anything before we timeout,
-this method will send a newline and wait once more before failing with
-the standard timeout.
+expected login prompts. Sends a newline in the hopes that this
+spurs the routers to print something.
+
+'connect' sends a newline immediately upon connection.
+'timeout' sends a newline if the connection timeouts.
+0 turns this feature off.
 
 I understand this works with Livingston Portmasters.
 
