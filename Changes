@@ -63,6 +63,7 @@ Revision history for Perl extension Net::Telnet::Cisco.
 	- New method: ios_break() - sends control-^
 	- Using ExtUtils::MakeMaker::prompt in test.pl for noninteractive installs
 
-1.10  Wed Apr  3 15:30:48 PST 2002
+1.10  Tue Jun 18 10:28:05 PDT 2002
 	- send_wakeup() written to help use module with Livingston Portmasters.
 	- warnings() and ignore_warnings() allow some error-strings to be ignored.
+	- fixed warning in prompt_append()

@@ -21,7 +21,7 @@ use Carp;
 use vars qw($AUTOLOAD @ISA $VERSION $DEBUG);
 
 @ISA      = qw(Net::Telnet);
-$VERSION  = '1.10_01';
+$VERSION  = '1.10';
 $^W       = 1;
 $DEBUG    = 0;
 $|++;
@@ -707,6 +707,7 @@ sub prompt_append {
     if ($orig) {
 	if ($self->_match_check($orig)) {
 	    $orig = $self->re_sans_delims($orig);
+	    return $self->error("Can't parse prompt: '$orig'") unless $orig;
 	}
     }
 
@@ -714,6 +715,12 @@ sub prompt_append {
 	print "prompt_append:\t[append: $_]\n" if $DEBUG;
 	if ($self->_match_check($_)) {
 	    my $re = $self->re_sans_delims($_);
+
+	    unless ($re) {
+		$self->error("Can't parse prompt: '$_'");
+		next;
+	    }
+
 	    $orig .= $orig ? "|$re" : $re;
 	}
     }

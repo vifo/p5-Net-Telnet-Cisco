@@ -36,6 +36,12 @@ SKIP: {
 				    ),  "new() object" );
 
     $S->errmode(sub {&confess});
+
+    # So we pass an even number of args to login()
+    $LOGIN	   ||= '';
+    $PASSWD	   ||= '';
+    $PASSCODE      ||= '';
+
     ok( $S->login(-Name     => $LOGIN,
 		  -Password => $PASSWD,
 		  -Passcode => $PASSCODE), "login()"		);
