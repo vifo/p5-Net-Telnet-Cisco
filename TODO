@@ -1,1 +1,9 @@
-	- Auto-depaging mode takes care of '--More--'-style prompts
+- Not all lines that begin with % are errors, some are warnings. Users should have the option to skip calling error() for these.
+
+- Have the program send a newline if it connects but doesn't get any data. This can "wake the router up".
+
+- print() reported not to log. Investigate.
+
+- More TACACS support
+
+- test.pl should use full login() semantics
