@@ -5,7 +5,9 @@ package Net::Telnet::Cisco;
 #
 # $Id$
 #
-# Todo: Add error and access logging.
+# Code wraps at 120 chars/line. Join us.
+#
+# TODO: Use hash as object base instead of filestream.
 #
 # POD documentation at end of file.
 #
@@ -14,14 +16,14 @@ package Net::Telnet::Cisco;
 require 5.005;
 
 use strict;
-use Net::Telnet 3.02;
+use Net::Telnet 3.03;
 use AutoLoader;
 use Carp;
 
 use vars qw($AUTOLOAD @ISA $VERSION $DEBUG);
 
 @ISA      = qw(Net::Telnet);
-$VERSION  = '1.10';
+$VERSION  = '1.10_085';
 $^W       = 1;
 $DEBUG    = 0;
 $|++;
@@ -37,68 +39,47 @@ sub new {
 
     # Add default prompt to args if none present.
     push @_, (-Prompt =>
-        '/(?m:^[\w.-]+\s?(?:\(config[^\)]*\))?\s?[\$#>]\s?(?:\(enable\))?\s*$)/')
+        '/(?m:^[\r\b]?[\w.-]+\s?(?:\(config[^\)]*\))?\s?[\$\#>]\s?(?:\(enable\))?\s*$)/')
 	unless grep /^-?prompt$/i, @_;
 
     # There's a new cmd_prompt in town.
     $self = $class->SUPER::new(@_) or return;
 
+    # *Must* define all defaults here. They're used below to parse incoming args.
     *$self->{net_telnet_cisco} = {
-	last_prompt	       => '',
-        last_cmd	       => '',
+	last_prompt	 => '',
+        last_cmd	 => '',
 
-        always_waitfor_prompt  => 1,
-	waitfor_pause	       => 0.1,
+	waitfor_pause	 => 0.1,
 
-	autopage	       => 1,
+        always_waitfor_prompt => 1,
+	autopage	 => 1,
+	normalize_cmd	 => 1,
+	send_wakeup	 => 0,
+	ignore_warnings	 => 0,
 
-	more_prompt	       => '/(?m:^\s*--More--)/',
-
-	normalize_cmd	       => 1,
-
-	send_wakeup 	       => 0,
-
-	ignore_warnings	       => 0,
-	warnings	       => '/(?mx:^% Unknown VPN
-				     |^%IP routing table VRF.* does not exist. Create first$
-				     |^%No CEF interface information
-				     |^%No matching route to delete$
-				     |^%Not all config may be removed and may reappear after reactivating/
-				   )/',
+	more_prompt	 => '/(?m:^[\s\0]*--More--)/',
+	errors		 => '/(?mx:^Unknown\ command\ "[^\"]*"\ Use\ \'help\'\ for\ more\ info
+	 |\%\ Unknown\ command\ or\ computer\ name
+	)/',
+        warnings	 => '/(?mx:^%\s?Unknown\ VPN
+	 |^\%\s?IP\ routing\ table\ VRF.*\ does\ not\ exist\.\ Create\ first$
+	 |^\%\s?No\ CEF\ interface\ information
+	 |^\%\s?No\ matching\ route\ to\ delete$
+	 |^\%\s?Not\ all\ config\ may\ be\ removed\ and\ may\ reappear\ after\ reactivating
+	 |^\%\s?Warning:
+	 )/',
     };
 
-    ## Parse the args.
     if (@_ == 2) {  # one positional arg given
         $host = $_[1];
-    } elsif (@_ > 2) {  # named args
-        ## Get the named args.
+    } elsif (@_ > 2) { # named args
         %args = @_;
 
-        ## Parse the errmode named arg first.
-        foreach (keys %args) {
-            $self->errmode($args{$_})
-                if /^-?errmode$/i;
-        }
-
-        ## Parse all other named args.
-        foreach (keys %args) {
-            if (/^-?always_waitfor_prompt$/i) {
-                $self->always_waitfor_prompt($args{$_});
-            }
-            elsif (/^-?waitfor_pause$/i) {
-                $self->waitfor_pause($args{$_});
-	    }
-            elsif (/^-?more_prompt$/i) {
-                $self->more_prompt($args{$_});
-	    }
-            elsif (/^-?autopage$/i) {
-                $self->autopage($args{$_});
-	    }
-            elsif (/^-?normalize_cmd$/i) {
-                $self->normalize_cmd($args{$_});
-	    }
-	    elsif (/^-?send_wakeup$/i) {
-		$self->send_wakeup($args{$_});
+        ## Parse the errmode named arg first then all other named args.
+        foreach my $method ( 'errmode', keys %{ * $self->{net_telnet_cisco} } ) {
+	    for ( grep defined, @args{$method, "-$method", "\u\L$method", "-\u\L$method" } ) {
+		$self->$method( $_ );
 	    }
 	}
     }
@@ -154,7 +135,10 @@ sub cmd {
     my $self             = shift;
     my $ok               = 1;
 
+    select((select($self), $|=1)[$[]);  # don't buffer writes
+
     my $normalize	 = $self->normalize_cmd;
+    my @page_args;
 
     # Parse args
     if (@_ == 1) {
@@ -164,6 +148,10 @@ sub cmd {
 	while (my ($k, $v) = splice @args, 0, 2) {
 	    $ {*$self}{net_telnet_cisco}{last_cmd} = $v if $k =~ /^-?[Ss]tring$/;
 	    $normalize = $v if $k =~ /^-?[Nn]ormalize_cmd$/;
+
+	    # Save some arguments for autopaging
+	    next if $k =~ /^(?:-?[Ss]tring|-?[Cc]md_remove_mode)$/;
+	    push @page_args, $k, $v;
 	}
     }
 
@@ -171,57 +159,50 @@ sub cmd {
     my $old_ors		 = $self->output_record_separator;
     my $need_more	 = 0;
     my @out;
+    $ {*$self}{net_telnet_cisco}{err} = 0;
 
-    while(1) {
+    while($ {*$self}{net_telnet_cisco}{err} == 0) {
 	# Send a space (with no newline) whenever we see a "More" prompt.
 	if ($need_more) {
 	    $self->output_record_separator('');
 
 	    # We saw a more prompt, so put it in the command output.
-	    my @tmp = $self->last_prompt;
+	    #
+	    # Send the <space>, taking care not to discard the top line.
+	    # Also need to send the user's args to this:
 
-	    # Send the <space>, taking care not to
-	    # discard the top line.
-	    push @tmp, $self->SUPER::cmd(String => " ", Cmd_remove_mode => 0);
+	    my @tmp =
+		( $self->last_prompt,
+		  $self->SUPER::cmd(String	     => " ",
+				    Cmd_remove_mode  => 0,
+				    Prompt	     => $self->more_prompt,
+				    @page_args,
+				   )
+		);
 
-	    if ($self->normalize_cmd) {
-		push @out, _normalize(@tmp);
-	    } else {
-		push @out, @tmp;
-	    }
+	    push @out, $self->normalize_cmd
+		? _normalize(@tmp)
+		: @tmp;
+
 	} else {
 	    $self->output_record_separator($old_ors);
-	    push @out, $self->SUPER::cmd(@_);
+
+	    if (scalar @_ == 1) {
+		push @out, $self->autopage
+		    ? $self->SUPER::cmd( -Prompt => $self->more_prompt,
+					 -String => +shift )
+		    : $self->SUPER::cmd( +shift );
+	    } else {
+		push @out, $self->autopage
+		    ? $self->SUPER::cmd( -Prompt => $self->more_prompt,
+					 @_ )
+		    : $self->SUPER::cmd( @_ );
+	    }
 	}
 
-	# Look for errors in output
-	for ( my ($i, $lastline) = (0, '');
-	      $i <= $#out;
-	      $lastline = $out[$i++] ) {
-
-	    # This may have to be a pattern match instead.
-	    if ( ( substr $out[$i], 0, 1 ) eq '%' ) {
-		if ( $out[$i] =~ /'\^' marker/ ) { # Typo & bad arg errors
-		    chomp $lastline;
-		    $self->error( join "\n",
-				  "Last command and router error: ",
-				  ( $self->last_prompt . $cmd ),
-				  $lastline,
-				  $out[$i],
-				);
-		    splice @out, $i - 1, 3;
-		} else { # All other errors.
-		    chomp $out[$i];
-		    $self->error( join "\n",
-				  "Last command and router error: ",
-				  ( $self->last_prompt . $cmd ),
-				  $out[$i],
-				);
-		    splice @out, $i, 2;
-		}
-		$ok = 0;
-		last;
-	    }
+	if ($self->find_errors(@out) ) {
+	    $ok = 0;
+	    last;
 	}
 
 	# Restore old settings
@@ -229,7 +210,9 @@ sub cmd {
 
 	# redo the while loop if we saw a More prompt.
 	my $more_re = $self->re_sans_delims($self->more_prompt);
-	if ($self->autopage && $self->last_prompt =~ /$more_re/) {
+	if ($self->autopage && (  $self->last_prompt =~ /$more_re/
+			       || $out[-1] =~ /$more_re/ )
+	   ) {
 	    $need_more = 1;
 	} else {
 	    last;
@@ -239,6 +222,64 @@ sub cmd {
     return wantarray ? @out : $ok;
 }
 
+sub find_errors {
+    my ($self, @out) = @_;
+
+    my $stream	= $ {*$self}{net_telnet_cisco};
+    my $cmd	= $stream->{last_cmd};
+    my $is_err  = 0;
+
+    # Look for errors in output
+    for ( my ($i, $lastline) = (0, '');
+	  $i <= $#out;
+	  $lastline = $out[$i++] ) {
+
+	# This may have to be a pattern match instead.
+	if ( ( substr $out[$i], 0, 1 ) eq '%' ) {
+	    if ( $out[$i] =~ /'\^' marker/ ) { # Typo & bad arg errors
+		chomp $lastline;
+		$self->error( join "\n",
+			      "Last command and router error: ",
+			      ( $self->last_prompt . $cmd ),
+			      $lastline,
+			      $out[$i],
+			    );
+		splice @out, $i - 1, 3;
+	    } else { # All other errors.
+		chomp $out[$i];
+		$self->error( join "\n",
+			      "Last command and router error: ",
+			      ( $self->last_prompt . $cmd ),
+			      $out[$i],
+			    );
+		splice @out, $i, 2;
+	    }
+
+	    $is_err++;
+
+	# Handle special case errors
+	} elsif ($stream->{errors}) {
+	    my $errors_re = $self->re_sans_delims($stream->{errors});
+
+	    if ( $out[$i] =~ /$errors_re/ ) {
+		chomp $out[$i];
+		$self->error( join "\n",
+			      "Last command and router error: ",
+			      ( $self->last_prompt . $cmd ),
+			      $out[$i],
+			    );
+		# XXX: splice out correct number of lines. This isn't flexible.
+		# Sure wish I had a CatOS box to experiment with. Cisco, are
+		#  you listening? :-)
+		splice @out, $i, 2;
+
+		$is_err++;
+	    }
+	}
+    }
+
+    return $is_err;
+}
 
 # waitfor now stores prompts to $obj->last_prompt()
 sub waitfor {
@@ -277,7 +318,6 @@ sub waitfor {
     my $prompt_re  = $self->re_sans_delims($self->prompt);
     my $more_re    = $self->re_sans_delims($self->more_prompt);
 
-
     # Add the current prompt if it's not already there. You can turn this behavior
     # off by setting always_waitfor_prompt to a false value.
     if ($self->always_waitfor_prompt && index($all_re, $prompt_re) == -1) {
@@ -288,7 +328,7 @@ sub waitfor {
 	$all_re	      = $self->re_sans_delims($all_prompts);
     }
 
-    # Add the more prompt if it's not present. See the autopage() docs
+    # Add the more prompt if it's not present. See autopage() docs
     # to turn this behaviour off.
     if ($self->autopage && index($all_re, $more_re) == -1) {
 	unshift @_, "-Match" if @_ == 1;
@@ -340,10 +380,12 @@ sub login {
        $usage,
        $sent_wakeup,
        );
-    my ($username, $password, $tacpass, $passcode ) = ('','','','');
+    my ($username, $password, $tacpass, $passcode ) = ('') x 4;
     my (%args, %seen);
 
     local $_;
+
+    select((select($self), $|=1)[$[]);  # don't buffer writes
 
     ## Init vars.
     $timeout = $self->timeout;
@@ -483,13 +525,17 @@ sub login {
 
 
 # Overridden to support ignore_warnings()
+# Also sets err flag
 sub error {
     my $self = shift;
+    my $stream = $ {*$self}{net_telnet_cisco};
+
+    $stream->{err} = 1;
 
     # Ignore warnings
     if ($self->ignore_warnings) {
 	my $errmsg = join '', @_;
-	my $warnings_re = $self->re_sans_delims($self->warnings);
+	my $warnings_re = $self->re_sans_delims($stream->{warnings});
 	return if $errmsg =~ /$warnings_re/;
     }
 
@@ -502,8 +548,10 @@ sub enable {
     my $self = shift;
     my $usage = 'usage: $obj->enable([Name => $name,] [Password => $password,] '
 	      . '[Passcode => $passcode,] [Level => $level] )';
-    my ($en_username, $en_password, $en_passcode, $en_level) = ('','','','');
+    my ($en_username, $en_password, $en_passcode, $en_level) = ('') x 4;
     my ($error, $lastline, $orig_errmode, $reset, %args, %seen);
+
+    select((select($self), $|=1)[$[]);  # don't buffer writes
 
     if (@_ == 1) {  # just passwd given
 	($en_password) = shift;
@@ -539,14 +587,16 @@ sub enable {
 	    }
 	};
 
+    return &$error("enable() failed: -Level was passed an undef.")
+	unless defined $en_level;
+
     # Store the old prompt without the //s around it.
     my ($old_prompt) = $self->re_sans_delims($self->prompt);
 
-    # We need to expect either a Password prompt or a
-    # typical prompt. If the user doesn't have enough
-    # access to run the 'enable' command, the device
-    # won't even query for a password, it will just
-    # ignore the command and display another [boring] prompt.
+    # We need to expect either a Password prompt or a typical
+    # prompt. If the user doesn't have enough access to run the
+    # 'enable' command, the device won't even query for a password, it
+    # will just ignore the command and display another [boring] prompt.
     $self->print("enable $en_level");
 
     {
@@ -563,7 +613,7 @@ sub enable {
 	};
 
 	if (not defined $match) {
-	    return &$error("enable failed: access denied or bad name, passwd, etc");
+	    return &$error("enable failed: access denied or bad name, passwd, etc.");
 	} elsif ($match =~ /sername|ogin/) {
 	    $self->print($en_username) or return &$error("enable failed");
 	    $seen{login}++
@@ -587,7 +637,7 @@ sub enable {
 	}
     }
 
-    if (not defined $en_level or $en_level =~ /^[1-9]/) {
+    if (not $en_level or $en_level =~ /^[1-9]/) {
 	# Prompts and levels over 1 give a #/(enable) prompt.
 	return $self->is_enabled ? 1 : &$error('Failed to enter enable mode');
     } else {
@@ -599,6 +649,7 @@ sub enable {
 # Leave enabled mode.
 sub disable {
     my $self = shift;
+    select((select($self), $|=1)[$[]);  # don't buffer writes
     $self->cmd('disable');
     return $self->is_enabled ? $self->error('Failed to exit enabled mode') : 1;
 }
@@ -607,9 +658,11 @@ sub disable {
 sub ios_break {
     my $self = shift;
 
+    select((select($self), $|=1)[$[]);  # don't buffer writes
+
     my $old_ors = $self->output_record_separator;
     $self->output_record_separator('');
-    my $ret = $self->print("\c^");
+    my $ret = $self->print("\c^b", @_);
     $self->output_record_separator($old_ors);
 
     return $ret;
@@ -631,68 +684,40 @@ sub last_cmd {
 
 # Examines the last prompt to determine the current mode.
 # Some prompts may be hard set to #, so this won't always return a valid answer.
-# Call 'show priv' instead.
+# This is a pretty weak heuristic. $session->cmd('show priv') is the better way.
+#
 # 1     => enabled.
 # undef => not enabled.
 sub is_enabled { $_[0]->last_prompt =~ /\#|enable|config/ ? 1 : undef }
 
-# Typical get/set method.
-sub always_waitfor_prompt {
-    my ($self, $arg) = @_;
-    my $stream = $ {*$self}{net_telnet_cisco};
-    $stream->{always_waitfor_prompt} = $arg if defined $arg;
-    return $stream->{always_waitfor_prompt};
+# Create all get/set methods:
+for my $sub (qw/always_waitfor_prompt waitfor_pause autopage 
+	        normalize_cmd send_wakeup ignore_warnings/) {
+
+    no strict 'refs';
+
+    *$sub = sub {
+	my ($self, $arg) = @_;
+	my $stream = $ {*$self}{net_telnet_cisco};
+	$stream->{$sub} = $arg if defined $arg;
+	return $stream->{$sub};
+    };
 }
 
-# Typical get/set method.
-sub waitfor_pause {
-    my ($self, $arg) = @_;
-    my $stream = $ {*$self}{net_telnet_cisco};
-    $stream->{waitfor_pause} = $arg if defined $arg;
-    return $stream->{waitfor_pause};
-}
+# Creates all prompt get/set methods:
+for my $sub (qw/errors warnings more_prompt/) {
 
-# Typical get/set method.
-sub autopage {
-    my ($self, $arg) = @_;
-    my $stream = $ {*$self}{net_telnet_cisco};
-    $stream->{autopage} = $arg if defined $arg;
-    return $stream->{autopage};
-}
+    no strict 'refs';
 
-# Typical get/set method.
-sub normalize_cmd {
-    my ($self, $arg) = @_;
-    my $stream = $ {*$self}{net_telnet_cisco};
-    $stream->{normalize_cmd} = $arg if defined $arg;
-    return $stream->{normalize_cmd};
-}
-
-# Typical get/set method.
-sub send_wakeup {
-    my ($self, $arg) = @_;
-    my $stream = $ {*$self}{net_telnet_cisco};
-    $stream->{send_wakeup} = $arg if defined $arg;
-    return $stream->{send_wakeup};
-}
-
-# Typical get/set method.
-sub ignore_warnings {
-    my ($self, $arg) = @_;
-    my $stream = $ {*$self}{net_telnet_cisco};
-    $stream->{ignore_warnings} = $arg if defined $arg;
-    return $stream->{ignore_warnings};
-}
-
-# Get/set the More prompt
-sub more_prompt {
-    my ($self, $arg) = @_;
-    my $stream = $ {*$self}{net_telnet_cisco};
-    if (defined $arg) {
-	$self->_match_check($arg);
-        $stream->{more_prompt} = $arg;
+    *$sub = sub {
+	my ($self, $arg) = @_;
+	my $stream = $ {*$self}{net_telnet_cisco};
+	if (defined $arg) {
+	    $self->_match_check($arg);
+	    $stream->{$sub} = $arg;
+	}
+	return $stream->{$sub};
     }
-    return $stream->{more_prompt};
 }
 
 # Join two or more regexen into one on "|".
@@ -730,6 +755,7 @@ sub prompt_append {
 }
 
 # Return a Net::Telnet regular expression without the delimiters.
+# XXX: an excellent candidate for memoization.
 sub re_sans_delims {
     my ($self, $str) = @_;
 
@@ -737,7 +763,7 @@ sub re_sans_delims {
 	unless $str;
 
     $self->_match_check($str);
-    my ($delim, $re) = $str =~  /^\s*m?\s*(\W)(.*)\1\s*$/;
+    my ($delim, $re) = $str =~ /^\s*m?\s*(\W)(.*)\1\s*$/ms;
     return $re;
 }
 
@@ -753,7 +779,7 @@ sub _normalize {
     1 while s/[^\cH\c?][\cH\c?]//mg; # ^H ^?
     s/^.*\cU//mg;		     # ^U
 
-    return wantarray ? split /$/mg, $_ : $_; # ORS instead?
+    return wantarray ? split /$/, $_ : $_; # ORS instead?
 }
 
 # Lifted from Net::Telnet en toto
@@ -796,9 +822,10 @@ sub _match_check {
 #------------------------------
 
 # Look for subroutines in Net::Telnet if we can't find them here.
+# This ranks a 4 on the OOP naughtiness scale.
 sub AUTOLOAD {
     my ($self) = @_;
-    croak "$self is an [unexpected] object, aborting" if ref $self;
+    confess "$AUTOLOAD passed an [unexpected] object, aborting" if ref $self;
     $AUTOLOAD =~ s/.*::/Net::Telnet::/;
     goto &$AUTOLOAD;
 }
@@ -865,30 +892,33 @@ SNMP, there's Net::Telnet::Cisco.
 
     $session = Net::Telnet::Cisco->new(
 	[Autopage		  => $boolean,] # 1
-	[More_prompt		  => $matchop,] # '/(?m:^\s*--More--)/',
+	[More_prompt		  => $matchop,] # '/(?m:^[\s\0]*--More--)/',
 	[Always_waitfor_prompt	  => $boolean,] # 1
 	[Waitfor_pause		  => $milliseconds,] # 0.1
 	[Normalize_cmd		  => $boolean,] # 1
 	[Send_wakeup		  => $when,] # 0
 	[Ignore_warnings	  => $boolean,] # 0
 	[Warnings		  => $matchop,] # see docs
-	
+	[Errors			  => $matchop,] # see docs
+
 	# Net::Telnet arguments
-	[Binmode		  => $mode,]
-	[Cmd_remove_mode	  => $mode,]
-	[Dump_Log		  => $filename,]
-	[Errmode		  => $errmode,]
-	[Fhopen			  => $filehandle,]
-	[Host			  => $host,]
-	[Input_log		  => $file,]
-	[Input_record_separator	  => $char,]
-	[Option_log		  => $file,]
-	[Output_log		  => $file,]
-	[Output_record_separator  => $char,]
-	[Port			  => $port,]
-	[Prompt			  => $matchop,] # see docs
-	[Telnetmode		  => $mode,]
-	[Timeout		  => $secs,]
+	[Binmode    		=> $mode,]
+        [Cmd_remove_mode		=> $mode,]
+        [Dump_Log   		=> $filename,]
+        [Errmode    		=> $errmode,]
+        [Fhopen     		=> $filehandle,]
+        [Host       		=> $host,]
+        [Input_log 		= => $file,]
+        [Input_record_separator	=> $chars,]
+        [Option_log 		=> $file,]
+        [Ors       		= => $chars,]
+        [Output_log 		=> $file,]
+        [Output_record_separator	=> $chars,]
+        [Port       		=> $port,]
+        [Prompt    		= => $matchop,] # see docs
+        [Rs         		=> $chars,]
+        [Telnetmode 		=> $mode,]
+        [Timeout    		=> $secs,]);
     );
 
 Creates a new object. Read `perldoc perlboot` if you don't understand that.
@@ -911,17 +941,26 @@ username, they start the login conversation with a password request.
     $ok = $obj->cmd($string);
     $ok = $obj->cmd(String   => $string,
                     [Output  => $ref,]
+                    [Cmd_remove_mode => $mode,]
+                    [Errmode => $mode,]
+                    [Input_record_separator => $chars,]
+                    [Ors     => $chars,]
+                    [Output_record_separator => $chars,]
                     [Prompt  => $match,]
-                    [Timeout => $secs,]
-                    [Cmd_remove_mode => $mode,]);
+                    [Rs      => $chars,]
+                    [Timeout => $secs,]);
 
     @output = $obj->cmd($string);
     @output = $obj->cmd(String   => $string,
                         [Output  => $ref,]
-                        [Prompt  => $match,]
-                        [Timeout => $secs,]
                         [Cmd_remove_mode => $mode,]
-                        [Normalize_cmd => $boolean,]);
+                        [Errmode => $mode,]
+                        [Input_record_separator => $chars,]
+                        [Ors     => $chars,]
+                        [Output_record_separator => $chars,]
+                        [Prompt  => $match,]
+                        [Rs      => $chars,]
+                        [Timeout => $secs,]);
 
 Normalize_cmd has been added to the default Net::Telnet args. It
 lets you temporarily change whether backspace, delete, and kill
@@ -944,6 +983,8 @@ Let's take a closer look, shall we?
 			# to treat the input as a multiline buffer.
 
     ^			# beginning of line
+
+      \r?		# optional linefeed
 
       [\w.-]+		# router hostname
 
@@ -984,8 +1025,12 @@ to investigate.
 
     $ok = $obj->enable($password);
 
-    $ok = $obj->enable([Name => $name,] [Password => $password,]
-	               [Passcode => $passcode,] [Level => $level,]);
+    $ok = $obj->enable(
+	[Name		=> $name,]
+ 	[Password	=> $password,]
+	[Passcode	=> $passcode,]
+	[Level		=> $level,]
+    );
 
 This method changes privilege level to enabled mode, (i.e. root)
 
@@ -1014,7 +1059,7 @@ This method exits the router's privileged mode.
 
 =item B<ios_break> - send a break (control-^)
 
-    $ok = $obj->ios_break;
+    $ok = $obj->ios_break( [ additional strings to print, ... ]  );
 
 You may have to use errmode(), fork, or threads to break at the
 an appropriate time.
@@ -1089,7 +1134,7 @@ Logging is unaffected by this setting.
 
     $prev = $obj->prompt($matchop);
 
-Default value: '/(?m:\s*--More--)/'.
+Default value:  '/(?m:^(?:[\s\0]*--More--)/',
 
 Please email me if you find others.
 
@@ -1133,15 +1178,28 @@ the logs, but that's it.
 
 Default value:
 
-	/(?mx:^% Unknown VPN
-	     |^%IP routing table VRF.* does not exist. Create first$
-	     |^%No CEF interface information
-	     |^%No matching route to delete$
-	     |^%Not all config may be removed and may reappear after reactivating
-	 )/
+	'/(?mx:^%\s?Unknown\ VPN
+	 |^%\s?IP\ routing\ table\ VRF.*\ does\ not\ exist\.\ Create\ first$
+	 |^%\s?No\ CEF\ interface\ information
+	 |^%\s?No\ matching\ route\ to\ delete$
+	 |^%\s?Not\ all\ config\ may\ be\ removed\ and\ may\ reappear\ after\ reactivating
+	 |^%\s?Warning:
+	 )/',
 
 Not all strings that begin with a '%' are really errors. Some are just
 warnings. Cisco calls these the CIPMIOSWarningExpressions.
+
+=item B<errors> - Matchop used to catch special-cased errors.
+
+    $boolean = $obj->errors;
+
+    $boolean = $obj->errors($matchop);
+
+Default value:
+
+    '/(?mx:^Unknown\ command\ "[^\"]*"\ Use\ \'help\'\ for\ more\ info\.)/',
+
+Some errors don't begin with a '%'. Trap them here.
 
 =back
 
@@ -1258,6 +1316,16 @@ server or the transfer will fail!
      		    . "tftp://$backup_host/$device-confg\n\n\n");
   }
 
+=head2 Sending control characters
+
+Use print() if you expect to get a prompt back.
+Use cmd() if you don't.
+
+  $session->print("\c^"); # send control-^
+  $session->cmd("\cZ"); # send control-Z
+
+See also: C<ios_break()>
+
 =head1 SUPPORT
 
 http://NetTelnetCisco.sourceforge.net/
@@ -1298,8 +1366,9 @@ Joshua_Keroes@eli.net $Date$
 It would greatly amuse the author if you would send email to him
 and tell him how you are using Net::Telnet::Cisco.
 
-As of Mar 2002, 170 people have emailed me. N::T::C is used to
-help manage over 14,000 machines! Keep the email rolling in!
+As of Mar 2002, over 200 people have emailed me or posted to the
+Net::Telnet::Cisco site. N::T::C is used to help manage over 14,000
+machines! Keep the email rolling in!
 
 =head1 THANKS
 
@@ -1307,7 +1376,10 @@ The following people understand what Open Source Software is all
 about. Thanks Brian Landers, Aaron Racine, Niels van Dijke, Tony
 Mueller, Frank Eickholt, Al Sorrell, Jebi Punnoose, Christian Alfsen,
 Niels van Dijke, Kevin der Kinderen, Ian Batterbee, Leonardo Cont,
-Steve Meier, and Andre Bonhote.
+Steve Meier, Andre Bonhote, Rob Patrick, FtR, James "mcaizjb3" Brown,
+and Hiro "Paul" Protagonist.
+
+Paul gets a ++ for code-ninja skills.
 
 Institutions: infobot.org #perl, perlmonks.org, sourceforge.net,
 the geeks at geekhouse.org, and eli.net.

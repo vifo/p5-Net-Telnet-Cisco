@@ -2,9 +2,18 @@
 Changes
 Cisco.pm
 INSTALL
-MANIFEST
+MANIFEST			This list of files
 MANIFEST.SKIP
 Makefile.PL
 README
 TODO
-test.pl
+t/00_ini.t
+t/10_cmd.t
+t/20_errmode.t
+t/30_autopage.t
+t/40_always_waitfor_prompt.t
+t/50_args_bugfix.t
+t/60_enable.t
+t/90_pod.t
+t/99_cleanup.t
+t/Utils.pm

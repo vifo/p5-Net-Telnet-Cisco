@@ -10,3 +10,6 @@ CVS/.*
 ^pm_to_blib$
 ~$
 ^#
+login.txt
+tmp.txt
+logs

@@ -44,22 +44,18 @@ INSTALL
 
 	1.2.2.1 Install with PPM3, the ActiveState Perl Package Manager
 
-		1. run PPM3
+		1. type "rep add http://telia.dl.sourceforge.net/sourceforge/nettelnetcisco/" (without the quotes)
 
-		2. type "rep add NTC http://prdownloads.sourceforge.net/nettelnetcisco/"
-		(without the quotes)
-
-		3. type "install Net::Telnet::Cisco".
+		2. type "install Net-Telnet-Cisco"
 		
-		For more information, read the PPM FAQ:
-		http://aspn.activestate.com/ASPN/Reference/Products/ActivePerl/faq/ActivePerl-faq2.html
+	For more information, read the PPM FAQ:
+	http://aspn.activestate.com/ASPN/Reference/Products/ActivePerl/faq/ActivePerl-faq2.html
 
 	1.2.2.2 Install with PPM, v2, the older version
 
 		1. run PPM.
 
-		2. type "set repository NTC http://prdownloads.sourceforge.net/nettelnetcisco/"
-		(without the quotes)
+		2. type "set repository NTC http://telia.dl.sourceforge.net/sourceforge/nettelnetcisco/" (without the quotes)
 
 		3. type "install Net::Telnet::Cisco".
 
