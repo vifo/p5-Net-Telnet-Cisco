@@ -1035,7 +1035,9 @@ See input_log() in L<Net::Telnet> for info.
 
 Input logs are easy-to-read translated transcripts with all of the
 control characters and telnet escapes cleaned up. If you want to view
-the raw session, see dump_log() in L<Net::Telnet>.
+the raw session, see dump_log() in L<Net::Telnet>. If you're getting
+tricky and using print() in addition to cmd(), you may also want to use 
+output_log().
 
 =head2 Big output
 
