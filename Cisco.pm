@@ -46,11 +46,25 @@ sub new {
     *$self->{net_telnet_cisco} = {
 	last_prompt	       => '',
         last_cmd	       => '',
+
         always_waitfor_prompt  => 1,
 	waitfor_pause	       => 0.1,
+
 	autopage	       => 1,
+
 	more_prompt	       => '/(?m:^\s*--More--)/',
+
 	normalize_cmd	       => 1,
+
+	send_wakeup 	       => 0,
+
+	ignore_warnings	       => 0,
+	warnings	       => '/(?mx:^% Unknown VPN
+				     |^%IP routing table VRF.* does not exist. Create first$
+				     |^%No CEF interface information
+				     |^%No matching route to delete$
+				     |^%Not all config may be removed and may reappear after reactivating/
+				   )/',
     };
 
     ## Parse the args.
@@ -82,6 +96,9 @@ sub new {
 	    }
             elsif (/^-?normalize_cmd$/i) {
                 $self->normalize_cmd($args{$_});
+	    }
+	    elsif (/^-?send_wakeup$/i) {
+		$self->send_wakeup($args{$_});
 	    }
 	}
     }
@@ -396,6 +413,7 @@ sub login {
 	    }
 	};
 
+    my $sent_wakeup = 0;
     while (1) {
 	(undef, $_) = $self->waitfor(
 		-match => '/(?:[Ll]ogin|[Uu]sername|[Pp]assw(?:or)?d)[:\s]*$/',
@@ -406,6 +424,21 @@ sub login {
 	unless ($_) {
 	    return &$error("read eof waiting for login or password prompt")
 		if $self->eof;
+
+	    # We timed-out. Send a newline as the wakeup-call.
+	    if ($sent_wakeup == 0 && $self->send_wakeup) {
+
+		$sent_wakeup = 1;
+
+		my $old_sep = $self->output_record_separator;
+
+		$self->output_record_separator("\n");
+		$self->print('');
+		$self->output_record_separator($old_sep);
+
+		next;
+	    }
+
 	    return &$error("timed-out during login process");
 	}
 
@@ -432,6 +465,21 @@ sub login {
 
     1;
 } # end sub login
+
+
+# Overridden to support ignore_warnings()
+sub error {
+    my $self = shift;
+
+    # Ignore warnings
+    if ($self->ignore_warnings) {
+	my $errmsg = join '', @_;
+	my $warnings_re = $self->re_sans_delims($self->warnings);
+	return if $errmsg =~ /$warnings_re/;
+    }
+
+    return $self->SUPER::error(@_);
+}
 
 
 # Tries to enter enabled mode with the password arg.
@@ -603,6 +651,22 @@ sub normalize_cmd {
     my $stream = $ {*$self}{net_telnet_cisco};
     $stream->{normalize_cmd} = $arg if defined $arg;
     return $stream->{normalize_cmd};
+}
+
+# Typical get/set method.
+sub send_wakeup {
+    my ($self, $arg) = @_;
+    my $stream = $ {*$self}{net_telnet_cisco};
+    $stream->{send_wakeup} = $arg if defined $arg;
+    return $stream->{send_wakeup};
+}
+
+# Typical get/set method.
+sub ignore_warnings {
+    my ($self, $arg) = @_;
+    my $stream = $ {*$self}{net_telnet_cisco};
+    $stream->{ignore_warnings} = $arg if defined $arg;
+    return $stream->{ignore_warnings};
 }
 
 # Get/set the More prompt
@@ -783,6 +847,9 @@ SNMP, there's Net::Telnet::Cisco.
 	[Always_waitfor_prompt	  => $boolean,] # 1
 	[Waitfor_pause		  => $milliseconds,] # 0.1
 	[Normalize_cmd		  => $boolean,] # 1
+	[Send_wakeup		  => $boolean,] # 0
+	[Ignore_warnings	  => $boolean,] # 0
+	[Warnings		  => $matchop,] # see docs
 	
 	# Net::Telnet arguments
 	[Binmode		  => $mode,]
@@ -797,7 +864,7 @@ SNMP, there's Net::Telnet::Cisco.
 	[Output_log		  => $file,]
 	[Output_record_separator  => $char,]
 	[Port			  => $port,]
-	[Prompt			  => $matchop,]
+	[Prompt			  => $matchop,] # see docs
 	[Telnetmode		  => $mode,]
 	[Timeout		  => $secs,]
     );
@@ -994,7 +1061,7 @@ output, turn this feature off.
 
 Logging is unaffected by this setting.
 
-=item B<more_prompt> - Regex used by autopage()
+=item B<more_prompt> - Matchop used by autopage()
 
     $matchop = $obj->prompt;
 
@@ -1004,6 +1071,50 @@ Default value: '/(?m:\s*--More--)/'.
 
 Please email me if you find others.
 
+=item B<send_wakeup> - send a newline to the router if it times-out during login.
+
+    $boolean = $obj->send_wakeup;
+
+    $boolean = $obj->send_wakeup($boolean);
+
+Default value: 0
+
+Some routers quietly allow you to connect but don't display the
+expected login prompts. If we don't see anything before we timeout,
+this method will send a newline and wait once more before failing with
+the standard timeout.
+
+I understand this works with Livingston Portmasters.
+
+=item B<ignore_warnings> - Don't call error() for warnings
+
+    $boolean = $obj->ignore_warnings;
+
+    $boolean = $obj->ignore_warnings($boolean);
+
+Default value: 0
+
+Not all strings that begin with a '%' are really errors. Some are just
+warnings. By setting this, you are ignoring them. This will show up in
+the logs, but that's it.
+
+=item B<warnings> - Matchop used by ignore_warnings().
+
+    $boolean = $obj->warnings;
+
+    $boolean = $obj->warnings($matchop);
+
+Default value:
+
+	/(?mx:^% Unknown VPN
+	     |^%IP routing table VRF.* does not exist. Create first$
+	     |^%No CEF interface information
+	     |^%No matching route to delete$
+	     |^%Not all config may be removed and may reappear after reactivating
+	 )/
+
+Not all strings that begin with a '%' are really errors. Some are just
+warnings. Cisco calls these the CIPMIOSWarningExpressions.
 
 =back
 

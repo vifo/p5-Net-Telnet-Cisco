@@ -1,5 +1,1 @@
-- Not all lines that begin with % are errors, some are warnings. Users should have the option to skip calling error() for these.
-
-- Have the program send a newline if it connects but doesn't get any data. This can "wake the router up".
-
-- More TACACS support
+- More TACACS support.
