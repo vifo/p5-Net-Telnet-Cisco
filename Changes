@@ -59,5 +59,6 @@ Revision history for Perl extension Net::Telnet::Cisco.
 	- Autopage bugfix - 1st line of every page after the 1st was missing
 	- New method: normalize_cmd() - strips ^H, ^?, and ^U
 	- Defaults now listed in docs
-	- New tip in docs: "Sending control characters"
 	- Project has a home: NetTelnetCisco.sourceforge.net
+	- New method: ios_break() - sends control-^
+	- Using ExtUtils::MakeMaker::prompt in test.pl for noninteractive installs

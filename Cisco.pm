@@ -540,6 +540,18 @@ sub disable {
     return $self->is_enabled ? $self->error('Failed to exit enabled mode') : 1;
 }
 
+# Send control-^ (without newline)
+sub ios_break {
+    my $self = shift;
+
+    my $old_ors = $self->output_record_separator;
+    $self->output_record_separator('');
+    my $ret = $self->print("\c^");
+    $self->output_record_separator($old_ors);
+
+    return $ret;
+}
+
 # Displays the last prompt.
 sub last_prompt {
     my $self = shift;
@@ -911,6 +923,13 @@ privilege")> instead.
 
 This method exits the router's privileged mode.
 
+=item B<ios_break> - send a break (control-^)
+
+    $ok = $obj->ios_break;
+
+You may have to use errmode(), fork, or threads to break at the
+an appropriate time.
+
 =item B<last_prompt> - displays the last prompt matched by prompt()
 
     $match = $obj->last_prompt;
@@ -1099,11 +1118,6 @@ server or the transfer will fail!
      		    . "tftp://$backup_host/$device-confg\n\n\n");
   }
 
-=head2 Sending control characters
-
-  $session->cmd("\c^"); # send a break
-  $session->cmd("\cZ"); # exit config mode. See also: disable()
-
 =head1 SUPPORT
 
 http://NetTelnetCisco.sourceforge.net/
@@ -1153,7 +1167,7 @@ The following people understand what Open Source Software is all
 about. Thanks Brian Landers, Aaron Racine, Niels van Dijke, Tony
 Mueller, Frank Eickholt, Al Sorrell, Jebi Punnoose, Christian Alfsen,
 Niels van Dijke, Kevin der Kinderen, Ian Batterbee, Leonardo Cont,
-and Steve Meier.
+Steve Meier, and Andre Bonhote.
 
 Institutions: infobot.org #perl, perlmonks.org, sourceforge.net,
 the geeks at geekhouse.org, and eli.net.

@@ -185,6 +185,12 @@ METHODS
 
         This method exits the router's privileged mode.
 
+    ios_break - send a break (control-^)
+            $ok = $obj->ios_break;
+
+        You may have to use errmode(), fork, or threads to break at the an
+        appropriate time.
+
     last_prompt - displays the last prompt matched by prompt()
             $match = $obj->last_prompt;
 
@@ -363,11 +369,6 @@ EXAMPLES
                         . "tftp://$backup_host/$device-confg\n\n\n");
       }
 
-  Sending control characters
-
-      $session->cmd("\c^"); # send a break
-      $session->cmd("\cZ"); # exit config mode. See also: disable()
-
 SUPPORT
     http://NetTelnetCisco.sourceforge.net/
 
@@ -413,7 +414,8 @@ THANKS
     The following people understand what Open Source Software is all about.
     Thanks Brian Landers, Aaron Racine, Niels van Dijke, Tony Mueller, Frank
     Eickholt, Al Sorrell, Jebi Punnoose, Christian Alfsen, Niels van Dijke,
-    Kevin der Kinderen, Ian Batterbee, Leonardo Cont, and Steve Meier.
+    Kevin der Kinderen, Ian Batterbee, Leonardo Cont, Steve Meier, and Andre
+    Bonhote.
 
     Institutions: infobot.org #perl, perlmonks.org, sourceforge.net, the
     geeks at geekhouse.org, and eli.net.
