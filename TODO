@@ -3,5 +3,3 @@
 - Have the program send a newline if it connects but doesn't get any data. This can "wake the router up".
 
 - More TACACS support
-
-- test.pl should use full login() semantics
