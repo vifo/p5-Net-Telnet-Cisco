@@ -44,3 +44,13 @@ Revision history for Perl extension Net::Telnet::Cisco.
 1.06  Mon Jan 14 09:42:20 PST 2002
 	- Turned on warnings, minor related changes
 	- Correctly return an error in waitfor()
+
+1.07  Tue Jan 15 12:41:36 PST 200
+	- Bugfix from Leonardo Cont - used wrong errmsg in enable()
+
+1.08  Wed Jan 30 15:49:26 PST 2002
+	- New feature: autopage()
+	- Fixed argument handling in new()
+	- Better internal prompt handling
+	- Better error reporting from invalid prompts
+	- Testing: Errmode set to \&Test::More::fail
